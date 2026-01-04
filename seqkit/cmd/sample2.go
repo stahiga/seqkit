@@ -140,34 +140,6 @@ Attention:
 			}
 		}
 
-		// Branch A
-		if number > 0 && !twoPass {
-			if !quiet {
-				log.Info("loading all sequences into memory...")
-			}
-			records, err := fastx.GetSeqs(file, alphabet, config.Threads, 10, idRegexp)
-			checkError(err)
-
-			totalSeqs := int64(len(records))
-			if totalSeqs > 0 && len(records[0].Seq.Qual) > 0 {
-				config.LineWidth = 0
-			}
-			if number >= totalSeqs {
-				outputRecords(records)
-			} else {
-				// Partial Shuffle
-				for i := int64(0); i < number; i++ {
-					j := i + _rand.Int63n(totalSeqs-i)
-					records[i], records[j] = records[j], records[i]
-				}
-				outputRecords(records[:number])
-			}
-			if !quiet {
-				log.Infof("%d sequences outputted", n)
-			}
-			return
-		}
-
 		fastxReader, err := fastx.NewReader(alphabet, file, idRegexp)
 		checkError(err)
 		defer fastxReader.Close()
@@ -177,6 +149,45 @@ Attention:
 			fastx.ForcelyOutputFastq = true
 		}
 		var record *fastx.Record
+
+		// Branch A
+		if number > 0 && !twoPass {
+			if !quiet {
+				log.Info("sampling by number using reservoir sampling...")
+			}
+			reservoir := make([]*fastx.Record, 0, number)
+			var count int64 = 0
+
+			for {
+				record, err = fastxReader.Read()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					checkError(err)
+					break
+				}
+				if count < number {
+					reservoir = append(reservoir, record.Clone())
+				} else {
+					j := _rand.Int63n(count + 1)
+					if j < number {
+						reservoir[j] = record.Clone()
+					}
+				}
+				count++
+			}
+			if len(reservoir) > 0 && len(reservoir[0].Seq.Qual) > 0 {
+				config.LineWidth = 0
+			}
+
+			outputRecords(reservoir)
+
+			if !quiet {
+				log.Infof("%d sequences outputted", n)
+			}
+			return
+		}
 
 		// Branch B
 		if proportion > 0.0 && !twoPass {
